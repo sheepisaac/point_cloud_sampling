@@ -15,13 +15,13 @@ def log(message, overwrite=False):
         print(message, flush=True)
 
 def load_point_cloud(file_path):
-    """Load a point cloud from a file."""
+    """Load a point cloud from a file, including colors if available."""
     log(f"Loading point cloud from {file_path}")
     pcd = o3d.io.read_point_cloud(file_path)
-    return np.asarray(pcd.points)
+    return np.asarray(pcd.points), np.asarray(pcd.colors) if pcd.has_colors() else None
 
-def save_point_cloud(points, output_dir, input_filename, k):
-    """Save a point cloud to a file with a modified name."""
+def save_point_cloud(points, colors, output_dir, input_filename, k):
+    """Save a point cloud with color information to a file."""
     base_name = os.path.splitext(input_filename)[0]  # Remove extension
     output_filename = f"{base_name}_sampled_k{k}.ply"
     output_path = os.path.join(output_dir, output_filename)
@@ -29,6 +29,8 @@ def save_point_cloud(points, output_dir, input_filename, k):
     log(f"Saving sampled point cloud to {output_path}")
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
+    if colors is not None:
+        pcd.colors = o3d.utility.Vector3dVector(colors)  # Assign colors
     o3d.io.write_point_cloud(output_path, pcd)
 
 def estimate_processing_time(num_points, k):
@@ -37,23 +39,29 @@ def estimate_processing_time(num_points, k):
     log(f"Estimated sampled point cloud size: {num_points // k} points")
     log(f"Estimated processing time: {estimated_time:.2f} seconds")
 
-def sample_point_cloud(points, k):
-    """Perform sampling on the point cloud using k-nearest neighbors."""
+def sample_point_cloud(points, colors, k):
+    """Perform sampling on the point cloud using k-nearest neighbors while preserving colors."""
     log(f"Performing sampling with k={k} neighbors")
     tree = KDTree(points)  # Create a KD-tree for efficient neighbor search
     sampled_points = []
+    sampled_colors = [] if colors is not None else None
     
     start_time = time.time()
     for i, point in enumerate(points):
         _, idx = tree.query(point, k=k)  # Find k nearest neighbors
         sampled_point = np.mean(points[idx], axis=0)  # Compute mean position
         sampled_points.append(sampled_point)
+        
+        if colors is not None:
+            sampled_color = np.mean(colors[idx], axis=0)  # Compute mean color
+            sampled_colors.append(sampled_color)
+        
         if i % 1000 == 0:
             elapsed_time = time.time() - start_time
             log(f"Processed {i} points... (Elapsed: {elapsed_time:.2f}s)", overwrite=True)
     
     log("")  # Move to a new line after progress output
-    return np.array(sampled_points)
+    return np.array(sampled_points), np.array(sampled_colors) if colors is not None else None
 
 def process_input(input_path, output_dir, k):
     """Process a single file or all point cloud files in a directory."""
@@ -61,10 +69,10 @@ def process_input(input_path, output_dir, k):
         # Single file processing
         file_name = os.path.basename(input_path)
         log(f"Processing single file: {file_name}")
-        points = load_point_cloud(input_path)
+        points, colors = load_point_cloud(input_path)
         estimate_processing_time(len(points), k)
-        sampled_points = sample_point_cloud(points, k)
-        save_point_cloud(sampled_points, output_dir, file_name, k)
+        sampled_points, sampled_colors = sample_point_cloud(points, colors, k)
+        save_point_cloud(sampled_points, sampled_colors, output_dir, file_name, k)
         log(f"Completed processing: {file_name}")
     elif os.path.isdir(input_path):
         # Directory processing
@@ -76,10 +84,10 @@ def process_input(input_path, output_dir, k):
             if file_name.endswith('.ply') or file_name.endswith('.pcd'):
                 log(f"Processing file: {file_name}")
                 input_file = os.path.join(input_path, file_name)
-                points = load_point_cloud(input_file)
+                points, colors = load_point_cloud(input_file)
                 estimate_processing_time(len(points), k)
-                sampled_points = sample_point_cloud(points, k)
-                save_point_cloud(sampled_points, output_dir, file_name, k)
+                sampled_points, sampled_colors = sample_point_cloud(points, colors, k)
+                save_point_cloud(sampled_points, sampled_colors, output_dir, file_name, k)
                 log(f"Completed processing: {file_name}")
     else:
         log(f"Error: {input_path} is not a valid file or directory.")
